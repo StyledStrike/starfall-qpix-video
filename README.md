@@ -2,6 +2,8 @@
 
 QPix (silly short name for Quantized Pixels) is a basic, low-res quantized video format and pure-Lua video player for StarfallEx.
 
+![](.assets/banner.gif)
+
 ## QPixPlayer
 
 To use the video player, you need to have [StarfallEx](https://github.com/thegrb93/StarfallEx) on Garry's Mod.
