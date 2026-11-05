@@ -26,7 +26,7 @@ It requires having [FFMPEG](https://ffmpeg.org/download.html) installed on your 
 
 ### Pre-built binaries
 
-```TODO```
+Go to the [Releases page](https://github.com/StyledStrike/starfall-qpix-video/releases/latest) to get Windows/Linux binaries.
 
 ### Building
 
