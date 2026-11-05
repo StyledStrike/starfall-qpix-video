@@ -31,8 +31,9 @@ local Config = {
     -- Players need to be this close to activate the video playback
     activationDistance = 1000,
 
-    -- Raw link to a file on the web
-    videoURL = "TO DO",
+    -- Raw link to a file on the web.
+    -- In here you can see a GitHub link to a sample video.
+    videoURL = "https://github.com/StyledStrike/starfall-qpix-video/raw/refs/heads/main/.assets/raising_shrek.dat"
 }
 
 if SERVER then
