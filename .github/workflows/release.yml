@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    name: Build & Publish Binaries
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            rid: linux-x64
+            extension: ''
+          - os: windows
+            rid: win-x64
+            extension: '.exe'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish project
+        run: |
+          dotnet publish QPixConverter/QPixConverter.csproj \
+            --configuration Release \
+            --runtime ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:PublishTrimmed=true \
+            --output ./publish-${{ matrix.rid }}
+
+      - name: Archive binaries
+        shell: bash
+        run: |
+          cd ./publish-${{ matrix.rid }}
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            zip -r ../QPixConverter-${{ matrix.rid }}.zip .
+          else
+            tar -czvf ../QPixConverter-${{ matrix.rid }}.tar.gz .
+          fi
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            QPixConverter-${{ matrix.rid }}.zip
+            QPixConverter-${{ matrix.rid }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
