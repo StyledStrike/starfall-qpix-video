@@ -10,11 +10,13 @@ Copy the contents of the `Starfall` folder from this repository, open the Steam 
 
 In-game, open the Starfall Editor, find and open the `qpix/qpix_player.txt` script from the file browser, and follow instructions that you can find at the top of that script.
 
+> ⚠️ Warning: Most big servers disable Lua JIT, so the the CPU usage can be a lot worse on singleplayer where it it's enabled by default.
+
 ## QPixConverter
 
 This repository also includes a C# application to convert videos to QPix using FFMPEG.
 
-It requires having [FFMPEG](https://ffmpeg.org/download.html) installed on your system.
+It requires having [FFMPEG](https://ffmpeg.org/download.html) installed on your system and added into your `PATH` environment variable.
 
 ![](.assets/qpixconverter_screenshot.png)
 
