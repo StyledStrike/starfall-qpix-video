@@ -1,0 +1,4 @@
+<Solution>
+    <Project Path="QPixConverter/QPixConverter.csproj" />
+    <Project Path="QPixLib/QPixLib.csproj" />
+</Solution>

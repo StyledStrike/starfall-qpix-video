@@ -1,0 +1,255 @@
+--@name QPix Player
+--@author StyledStrike
+--@shared
+
+--[[
+    This script uses the QPix decoder to play a video.
+
+    It takes care of downloading the video data from the Web (like Dropbox),
+    and keeping the playback synchronized for anyone near the chip.
+
+    To use it:
+
+    - Convert your video to the QPix format using the QPixConverter
+      program (available on the project's GitHub page)
+    
+    - Upload the resulting ".dat" file to a cloud storage website
+      that supports sharing raw file links (like Dropbox)
+    
+    - Change `Config.videoURL` to point to a QPix video link you uploaded your cloud storage.
+
+    - Spawn the chip and a Starfall screen, link the screen to the chip.
+
+    - Anyone who sees a permission request on the screen
+      should press E to accept them to watch the video.
+]]
+
+local Config = {
+    -- Audio volume
+    volume = 0.75,
+
+    -- Players need to be this close to activate the video playback
+    activationDistance = 1000,
+
+    -- Raw link to a file on the web
+    videoURL = "TO DO",
+}
+
+if SERVER then
+    -- Keep track of when the chip was spawned,
+    -- which is when the video should've started.
+    local serverBaseTime = timer.curtime()
+
+    hook.add( "ClientInitialized", "", function( ply )
+        net.start( "set_base_time" )
+        net.writeFloat( serverBaseTime )
+        net.send( ply, false )
+    end )
+
+    net.receive( "debug_print", function( _, ply )
+        local text = net.readString()
+        print( ply:getName() .. ": " .. text )
+    end )
+end
+
+if not CLIENT then return end
+
+--@include ./decoder.txt
+local QPixDecoder = require( "./decoder.txt" )
+
+QPixDecoder:SetVolume( Config.volume )
+QPixDecoder:SetLooping( true )
+
+local Player = {
+    hasPermissions = false,
+    isActive = false,
+}
+
+function Player.Print( text )
+    net.start( "debug_print" )
+    net.writeString( text )
+    net.send( nil, false )
+end
+
+function Player.DrawPermissionRequest()
+    local w, h = render.getResolution()
+    local x, y = w * 0.5, h * 0.5
+    local m = 0.5 + math.abs( math.sin( timer.realtime() * 2 ) ) * 0.5
+
+    render.setFont( "DermaLarge" )
+    render.setColor( Color( 219 * m, 208 * m, 111 * m ) )
+    render.drawText( x, y, "This chip needs your permission to run!\nPress E on the chip/screen.", 1 )
+end
+
+function Player.CheckPermissions()
+    Player.hasPermissions = false
+
+    local permissions = {
+        ["render.screen"] = {},
+        ["render.offscreen"] = {},
+        ["file.writeTemp"] = {},
+        ["bass.loadFile"] = { "data/sf_filedatatemp/0/qpixplayer_audio.ogg" },
+        ["http.get"] = { Config.videoURL }
+    }
+
+    local list = {}
+    local passed = true
+
+    for name, args in pairs( permissions ) do
+        list[#list + 1] = name
+
+        if not hasPermission( name, unpack( args ) ) then
+            passed = false
+        end
+    end
+
+    if not passed then
+        setupPermissionRequest( list, "This chip require these permissions to play a video.", true )
+        hook.add( "PermissionRequest", "Player.CheckPermissions", Player.CheckPermissions )
+
+        return
+    end
+
+    Player.hasPermissions = true
+
+    hook.remove( "PermissionRequest", "Player.CheckPermissions" )
+    hook.add( "Render", "Player.DrawInterface", Player.DrawInterface )
+    timer.create( "CheckShouldActivate", 2, 0, Player.CheckShouldActivate )
+end
+
+timer.simple( 0, Player.CheckPermissions )
+
+-- Logic to synchronize the video with the server is here
+do
+    local serverBaseTime = 0
+
+    function Player.GetServerVideoTime()
+        return timer.curtime() - serverBaseTime
+    end
+
+    net.receive( "set_base_time", function()
+        serverBaseTime = net.readFloat()
+
+        if QPixDecoder:IsLoaded() then
+            QPixDecoder:SeekToTime( Player.GetServerVideoTime() )
+        end
+    end )
+end
+
+function Player.GetVideoData( callback )
+    if http.getActiveRequests() > 0 then return end
+
+    http.get( Config.videoURL, function( body, _, _, code )
+        code = tostring( code )
+
+        if code:sub( 1, 1 ) ~= "2" then
+            Player.SetStatus( "Failed to load: Non-200 status code " .. code )
+            Player.Print( "Failed to load: Non-200 status code " .. code )
+
+            return
+        end
+
+        callback( body )
+
+    end, function( reason )
+        Player.SetStatus( "Failed to load: " .. reason )
+        Player.Print( "Failed to load: " .. reason )
+    end )
+end
+
+function Player.LoadVideoData()
+    Player.SetStatus( "Loading..." )
+
+    Player.GetVideoData( function( data )
+        if not Player.isActive then
+            Player.Print( "Ignoring downloaded data as the player is not active" )
+            return
+        end
+
+        QPixDecoder:Load( data )
+        QPixDecoder:SeekToTime( Player.GetServerVideoTime() )
+        QPixDecoder:Play()
+
+        local title = QPixDecoder.metadata.title or "<Untitled>"
+        setName( "QPix Player - " .. title )
+
+        Player.SetStatus( title .. " - " .. QPixDecoder:ToString() )
+        Player.Print( "Loaded video data" )
+    end )
+end
+
+local EyePos = eyePos
+local chipEnt = chip()
+
+function Player.CheckShouldActivate()
+    local basePos = chipEnt:getPos()
+    local activationDistanceSqr = Config.activationDistance * Config.activationDistance
+    local shouldActivate = EyePos():getDistanceSqr( basePos ) < activationDistanceSqr
+
+    if Player.isActive ~= shouldActivate then
+        Player.isActive = shouldActivate
+
+        if shouldActivate then
+            Player.LoadVideoData()
+        else
+            Player.Print( "Deactivated" )
+            QPixDecoder:Unload()
+        end
+    end
+
+    if shouldActivate and QPixDecoder.audioChannel then
+        QPixDecoder.audioChannel:setPos( basePos )
+    end
+end
+
+function Player.SetStatus( text )
+    Player.statusText = text
+    Player.statusTextW = nil
+end
+
+Player.SetStatus( "..." )
+
+local SetFont = render.setFont
+local SetRGBA = render.setRGBA
+local DrawRect = render.drawRectFast
+local DrawSimpleText = render.drawSimpleText
+
+function Player.DrawInterface()
+    if not Player.isActive then return end
+
+    if not Player.hasPermissions then
+        Player.DrawPermissionRequest()
+        return
+    end
+
+    local screenW, screenH = render.getResolution()
+
+    if not Player.statusTextW then
+        SetFont( "Trebuchet18" )
+        Player.statusTextW, Player.statusTextH = render.getTextSize( Player.statusText )
+    end
+
+    if not QPixDecoder:IsLoaded() then
+        local halfSW, halfSH = screenW * 0.5, screenH * 0.5
+        local boxW, boxH = Player.statusTextW + 64, 64
+
+        SetRGBA( 50, 50, 50, 255 )
+        render.drawRoundedBox( 8, halfSW - boxW * 0.5, halfSH - boxH * 0.5, boxW, boxH )
+
+        SetFont( "CloseCaption_Bold" )
+        SetRGBA( 220, 220, 200, 55 + math.abs( math.sin( timer.realtime() * 3 ) * 200 ) )
+        DrawSimpleText( halfSW, halfSH, Player.statusText, 1, 1 )
+
+        return
+    end
+
+    SetFont( "Trebuchet18" )
+
+    local _, playerY, playerW, playerH = QPixDecoder:Draw( 0, 0, screenW, screenH - Player.statusTextH )
+
+    SetRGBA( 0, 0, 0, 200 )
+    DrawRect( 0, playerY + playerH, playerW, Player.statusTextH )
+
+    SetRGBA( 255, 255, 255, 200 )
+    DrawSimpleText( 4, playerY + playerH, Player.statusText, 0, 0 )
+end

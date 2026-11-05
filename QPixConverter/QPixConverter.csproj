@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <PublishSingleFile>true</PublishSingleFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\QPixLib\QPixLib.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Aprillz.MewUI.Backend.MewVG.Win32" Version="0.22.1" />
+      <PackageReference Include="Aprillz.MewUI.Backend.MewVG.X11" Version="0.22.1" />
+      <PackageReference Include="Aprillz.MewUI.Core" Version="0.22.1" />
+      <PackageReference Include="Aprillz.MewUI.Platform.Win32" Version="0.22.1" />
+      <PackageReference Include="Aprillz.MewUI.Platform.X11" Version="0.22.1" />
+    </ItemGroup>
+
+</Project>

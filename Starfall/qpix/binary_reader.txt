@@ -1,0 +1,98 @@
+--@name Binary Reader
+--@author StyledStrike
+
+--[[
+    This is meant to be a slightly optimized alternative to `bit.stringstream`.
+    Also, the seek/tell functions assumes that byte indexes starts at 0.
+]]
+
+return function( buffer, useLittleEndian )
+    local reader = {}
+    local p = 0
+
+    reader.Tell = function()
+        return p
+    end
+
+    reader.Seek = function( pos )
+        p = pos
+    end
+
+    local Byte = string.byte
+
+    reader.ReadUInt8 = function()
+        p = p + 1
+        return Byte( buffer, p, p )
+    end
+
+    -- Faster than calling ReadUInt8() twice
+    reader.ReadUInt8_8 = function()
+        p = p + 2
+        return Byte( buffer, p - 1, p )
+    end
+
+    -- Faster than calling ReadUInt8() three times
+    reader.ReadUInt8_8_8 = function()
+        p = p + 3
+        return Byte( buffer, p - 2, p )
+    end
+
+    reader.ReadString = function( len )
+        local result = string.sub( buffer, p + 1, p + len )
+        p = p + len
+
+        return result
+    end
+
+    local BAnd = bit.band
+    local LShift = bit.lshift
+
+    reader.ReadVLQ = function()
+        local result = 0
+
+        for _ = 1, 8 do
+            local c = reader.ReadUInt8()
+
+            result = LShift( result, 7 )
+            result = result + BAnd( c, 0x7F )
+
+            if BAnd( c, 0x80 ) ~= 0x80 then
+                return result
+            end
+        end
+
+        return result
+    end
+
+    if useLittleEndian then
+        reader.ReadUInt16 = function()
+            p = p + 2
+
+            local a, b = Byte( buffer, p - 1, p )
+            return b * 0x100 + a
+        end
+
+        reader.ReadUInt32 = function()
+            p = p + 4
+
+            local a, b, c, d = Byte( buffer, p - 3, p )
+            return d * 0x1000000 + c * 0x10000 + b * 0x100 + a
+        end
+    else
+        reader.ReadUInt16 = function()
+            p = p + 2
+
+            local a, b = Byte( buffer, p - 1, p )
+            return a * 0x100 + b
+        end
+
+        reader.ReadUInt32 = function()
+            p = p + 4
+
+            local a, b, c, d = Byte( buffer, p - 3, p )
+            return a * 0x1000000 + b * 0x10000 + c * 0x100 + d
+        end
+    end
+
+    return reader
+end

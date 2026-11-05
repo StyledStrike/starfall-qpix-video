@@ -1,0 +1,445 @@
+--@name QPix Decoder
+--@author StyledStrike
+--@client
+
+--[[
+    A silly decoder and renderer for Quantized Pixels, a rudimentary video format.
+
+    Required permissions:
+    - "render.offscreen"
+    - "bass.loadFile" (for videos with audio)
+    - "file.writeTemp" (for videos with audio)
+]]
+
+local QPixDecoder = {
+    audioOptions = {
+        distance = 1000,
+        volume = 1.0,
+        is3d = true
+    },
+
+    isLooping = false,
+    isPlaying = false,
+    playbackSpeed = 1,
+
+    RT_NAME = "qpix_frame",
+}
+
+--@include ./formats.txt
+QPixDecoder.formats = dofile( "./formats.txt" )
+
+--@include ./binary_reader.txt
+QPixDecoder.CreateReader = dofile( "./binary_reader.txt" )
+
+do
+    local IsInRenderView = render.isInRenderView
+    local cpuAverage = cpuAverage
+    local cpuMax = cpuMax
+
+    hook.add( "RenderOffscreen", "QPixDecoder.RenderPixels", function()
+        if not IsInRenderView() and QPixDecoder.reader and cpuAverage() / cpuMax() < 0.8 then
+            QPixDecoder:RenderPixels()
+        end
+    end )
+end
+
+function QPixDecoder:Load( data )
+    self:Unload()
+
+    assert( type( data ) == "string", "Provided video data is not a string" )
+
+    if not render.renderTargetExists( self.RT_NAME ) then
+        render.createRenderTarget( self.RT_NAME )
+    end
+
+    local reader = self.CreateReader( data, false )
+
+    -- Check the magic code
+    local magicA, magicB = reader.ReadUInt8_8()
+    local magicC, magicD = reader.ReadUInt8_8()
+    assert( string.char( magicA, magicB, magicC, magicD ) == "QPIX", "Data is not a QPix video" )
+
+    -- Read JSON metadata
+    local metadataLength = reader.ReadUInt32()
+    local metadata = json.decode( reader.ReadString( metadataLength ) )
+
+    assert( metadata ~= nil, "Failed to parse metadata" )
+    assert( metadata.version == 1, "Unsupported version: " .. tostring( metadata.version ) )
+
+    local formatHandler = self.formats[metadata.colorFormat]
+    assert( formatHandler ~= nil, "Unsupported color format: " .. tostring( metadata.colorFormat ) )
+
+    -- Store mapping frames metadata, and skip it for now
+    self.mappingDataLength = reader.ReadUInt32()
+    self.mappingDataStartOffset = reader.Tell()
+    reader.Seek( self.mappingDataStartOffset + self.mappingDataLength )
+
+    -- Read audio data
+    local audioDataLength = reader.ReadUInt32()
+
+    if audioDataLength > 0 then
+        local audioData = reader.ReadString( audioDataLength )
+        local tempAudioPath = file.writeTemp( "qpixplayer_audio.ogg", audioData )
+
+        self:LoadAudioFromFile( tempAudioPath )
+    end
+
+    -- Store everything we need for playback
+    self.reader = reader
+    self.metadata = metadata
+    self.formatHandler = formatHandler
+    self.headerLength = 4 + ( 4 + metadataLength ) + ( 4 + self.mappingDataLength ) + ( 4 + audioDataLength )
+    self.totalDataLength = string.len( data )
+
+    self.isPlaying = false
+    self.playbackSpeed = 1
+
+    self.startTimeOffset = 0
+    self.lastReadFrame = 0
+    self.lastRenderedFrame = -1
+    self.changedCount = 0
+    self.shouldClear = true
+
+    local lastPixelCount = self.framePixelCount
+    self.framePixelCount = metadata.width * metadata.height
+
+    -- Only recreate the pixel color output tables when the resolution changes
+    if lastPixelCount == self.framePixelCount then return end
+
+    local changedPixelIndexes = {}
+    local frameR, frameG, frameB = {}, {}, {}
+
+    for i = 1, self.framePixelCount do
+        changedPixelIndexes[i] = 0
+        frameR[i] = 0
+        frameG[i] = 0
+        frameB[i] = 0
+    end
+
+    self.changedPixelIndexes = changedPixelIndexes
+    self.frameR, self.frameG, self.frameB = frameR, frameG, frameB
+end
+
+function QPixDecoder:LoadAudioFromFile( filePath )
+    local is3d = self.audioOptions.is3d
+
+    bass.loadFile( filePath, is3d and "3d noplay noblock" or "noplay noblock", function( channel, _, err )
+        if not isValid( channel ) then
+            print( err )
+            return
+        end
+
+        if isValid( self.audioChannel ) then
+            self.audioChannel:stop()
+        end
+
+        local audioOptions = self.audioOptions
+
+        if is3d then
+            channel:setPos( chip():getPos() )
+            channel:setFade( audioOptions.distance * 0.25, audioOptions.distance )
+        end
+
+        channel:setVolume( audioOptions.volume )
+        channel:setPitch( self.playbackSpeed )
+        channel:setLooping( self.loop )
+
+        self.audioChannel = channel
+
+        if self.isPlaying then
+            channel:setTime( self:GetPlaybackTime() )
+            channel:play()
+        end
+    end )
+end
+
+function QPixDecoder:Unload()
+    self.isPlaying = false
+    self.playbackSpeed = 1
+
+    self.reader = nil
+    self.metadata = nil
+    self.formatHandler = nil
+    self.framePixelCount = nil
+
+    self.frameR = nil
+    self.frameG = nil
+    self.frameB = nil
+    self.changedPixelIndexes = nil
+
+    if isValid( self.audioChannel ) then
+        self.audioChannel:stop()
+    end
+
+    self.audioChannel = nil
+end
+
+function QPixDecoder:IsLoaded()
+    return self.reader ~= nil
+end
+
+QPixDecoder.toStringFormat = "<%s, %dx%d, %d frames @ %d FPS, %s>"
+
+function QPixDecoder:ToString()
+    local metadata = self.metadata
+
+    if not metadata then
+        return "<no video loaded>"
+    end
+
+    return self.toStringFormat:format( string.niceSize( self.totalDataLength ), metadata.width, metadata.height, metadata.frameCount, metadata.fps, metadata.colorFormat )
+end
+
+function QPixDecoder:SetVolume( volume )
+    self.audioOptions.volume = volume
+
+    if isValid( self.audioChannel ) then
+        self.audioChannel:setVolume( volume )
+    end
+end
+
+function QPixDecoder:SetLooping( loop )
+    self.loop = loop
+
+    local channel = self.audioChannel
+
+    if isValid( channel ) then
+        channel:setLooping( loop )
+    end
+end
+
+local Time = timer.realtime
+
+function QPixDecoder:SetPlaybackSpeed( speed )
+    local time = self:GetPlaybackTime()
+
+    self.playbackSpeed = speed
+    self.startTime = Time() - ( time / speed )
+
+    if isValid( self.audioChannel ) then
+        self.audioChannel:setPitch( speed )
+    end
+end
+
+function QPixDecoder:GetTotalTime()
+    local metadata = self.metadata
+    assert( metadata ~= nil, "Tried to GetTotalTime without loading a video first" )
+
+    return metadata.frameCount / metadata.fps
+end
+
+function QPixDecoder:GetPlaybackTime()
+    return ( Time() - self.startTime ) * self.playbackSpeed
+end
+
+function QPixDecoder:SeekToTime( time )
+    local metadata = self.metadata
+    assert( metadata ~= nil, "Tried to SeekToTime without loading a video first" )
+
+    self:SeekToFrame( time * metadata.fps )
+end
+
+function QPixDecoder:SeekToFrame( frame )
+    local reader = self.reader
+    local metadata = self.metadata
+    assert( reader ~= nil, "Tried to SeekToFrame without loading a video first" )
+
+    -- Loop frame index if it's larger than the video length
+    frame = math.floor( frame % metadata.frameCount )
+
+    -- Find the lowest mapped frame available for the target frame
+    -- (the mapped frame just before the target frame).
+    local mappedFrameIndex = math.floor( frame / metadata.mappingInterval )
+
+    -- Jump to where the byte offset for the mapped frame is stored.
+    -- Mapped frame indexes are stored as UInt32 (4 bytes).
+    reader.Seek( self.mappingDataStartOffset + mappedFrameIndex * 4 )
+
+    -- Read the mapped frame byte offset, then jump to it (relative to the header)
+    local frameByteOffset = reader.ReadUInt32()
+    reader.Seek( self.headerLength + frameByteOffset )
+
+    -- If the mapped frame is not exactly the target frame index,
+    -- read as many frames as it takes to reach it.
+    local frameIndex = mappedFrameIndex * metadata.mappingInterval
+
+    while frameIndex < frame do
+        frameIndex = frameIndex + 1
+        self:AdvanceFrame()
+    end
+
+    -- Update the playback state
+    local videoTime = frameIndex / metadata.fps
+
+    self.lastReadFrame = frameIndex
+    self.lastRenderedFrame = -1
+    self.startTime = Time() - ( videoTime / self.playbackSpeed )
+    self.shouldClear = frameIndex < 1
+
+    if isValid( self.audioChannel ) then
+        self.audioChannel:setTime( videoTime )
+    end
+end
+
+function QPixDecoder:Play()
+    assert( self.reader ~= nil, "Tried to Play without loading a video first" )
+
+    -- Seek now so that `startTime` gets updated
+    self:SeekToFrame( self.lastReadFrame )
+    self.isPlaying = true
+
+    if isValid( self.audioChannel ) then
+        self.audioChannel:play()
+    end
+end
+
+function QPixDecoder:Pause()
+    assert( self.reader ~= nil, "Tried to Pause without loading a video first" )
+
+    self.isPlaying = false
+
+    if isValid( self.audioChannel ) then
+        self.audioChannel:pause()
+    end
+end
+
+function QPixDecoder:AdvanceFrame()
+    local reader = self.reader
+    local frameMode = reader.ReadUInt8()
+
+    if frameMode == 0 then -- QPixFrameMode.SKIP
+        return
+    end
+
+    if frameMode == nil then
+        error( "Unexpected end of data stream at: " .. reader.Tell() )
+        return
+    end
+
+    local changed = self.changedPixelIndexes
+    local frameR, frameG, frameB = self.frameR, self.frameG, self.frameB
+    local changedCount = 0
+
+    if frameMode == 1 then -- QPixFrameMode.DELTA
+        changedCount = reader.ReadUInt32()
+        self.formatHandler.readDeltaFrame( reader, changedCount, changed, frameR, frameG, frameB )
+
+    elseif frameMode == 2 then -- QPixFrameMode.FULL
+        changedCount = self.framePixelCount
+        self.formatHandler.readFullFrame( reader, changedCount, changed, frameR, frameG, frameB )
+
+    else
+        error( "Unknown frame mode: " .. tostring( frameMode ) )
+    end
+
+    self.changedCount = changedCount
+end
+
+local Floor = math.floor
+
+local SelectRenderTarget = render.selectRenderTarget
+local SetViewPort = render.setViewPort
+local Clear = render.clearRGBA
+
+function QPixDecoder:RenderPixels()
+    local metadata = self.metadata
+    if not metadata then return end
+
+    local isPlaying = self.isPlaying
+    local frame = isPlaying and Floor( self:GetPlaybackTime() * metadata.fps ) or self.lastReadFrame
+
+    if isPlaying and frame > self.lastReadFrame then
+        if frame > metadata.frameCount then
+            if self.loop then
+                self:SeekToFrame( 0 )
+            else
+                self:Pause()
+            end
+
+            return
+        end
+
+        -- Read all frames we've missed since the last time `RenderPixels` ran,
+        -- which can happen when the CPU limiter kicks in.
+        for _ = self.lastReadFrame, frame - 1 do
+            self:AdvanceFrame()
+        end
+
+        self.lastReadFrame = frame
+    end
+
+    if frame == self.lastRenderedFrame then return end
+
+    self.lastRenderedFrame = frame
+
+    -- Draw the pixels that have changed in the last read frame
+    local changed = self.changedPixelIndexes
+    local frameR, frameG, frameB = self.frameR, self.frameG, self.frameB
+    local changedCount = self.changedCount
+
+    SelectRenderTarget( self.RT_NAME )
+
+    if self.shouldClear then
+        self.shouldClear = false
+        SetViewPort( 0, 0, 1024, 1024 )
+        Clear( 0, 0, 0, 255, false, false )
+    end
+
+    local width = metadata.width
+    local pixelI = 0
+    local x, y = 0, 0
+
+    for i = 1, changedCount do
+        pixelI = changed[i]
+
+        x = Floor( pixelI % width )
+        y = Floor( pixelI / width )
+
+        SetViewPort( x, y, 1, 1 )
+        Clear( frameR[i], frameG[i], frameB[i], 255, false, false )
+    end
+
+    self.changedCount = 0
+
+    SelectRenderTarget()
+end
+
+local function FitDimensions( originalWidth, originalHeight, maxWidth, maxHeight )
+    local widthRatio = maxWidth / originalWidth
+    local heightRatio = maxHeight / originalHeight
+    local scaleFactor = math.min( widthRatio, heightRatio )
+
+    local newWidth = originalWidth * scaleFactor
+    local newHeight = originalHeight * scaleFactor
+
+    return newWidth, newHeight
+end
+
+local SetRGBA = render.setRGBA
+local SetFilterMag = render.setFilterMag
+local SetRenderTargetTexture = render.setRenderTargetTexture
+local DrawTexturedRectUVFast = render.drawTexturedRectUVFast
+
+function QPixDecoder:Draw( x, y, w, h )
+    local metadata = self.metadata
+    if not metadata then return end
+
+    local videoW, videoH = metadata.width, metadata.height
+    local scaledW, scaledH = FitDimensions( videoW, videoH, w, h )
+
+    x = x + ( w * 0.5 ) - ( scaledW * 0.5 )
+    y = y + ( h * 0.5 ) - ( scaledH * 0.5 )
+
+    SetFilterMag( 1 )
+    SetRenderTargetTexture( self.RT_NAME )
+
+    SetRGBA( 255, 255, 255, 255 )
+    DrawTexturedRectUVFast( x, y, scaledW, scaledH, 0, 0, videoW / 1024, videoH / 1024, true )
+
+    SetRenderTargetTexture( nil )
+    SetFilterMag( 0 )
+
+    return x, y, scaledW, scaledH
+end
+
+return QPixDecoder
