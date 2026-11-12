@@ -91,14 +91,14 @@ public static class FFmpeg
         return (process.ExitCode == 0, stream.ToArray(), await stderrTask);
     }
 
-	private static async Task<int> GetExactFrameCountAsync(string filePath)
+	private static async Task<int> GetPacketCountAsync(string filePath)
 	{
 		var args = new[]
 		{
 			"-v", "error",
 			"-select_streams", "v:0",
-			"-count_frames",
-			"-show_entries", "stream=nb_read_frames",
+			"-count_packets",
+			"-show_entries", "stream=nb_read_packets",
 			"-of", "default=nokey=1:noprint_wrappers=1",
 			filePath
 		};
@@ -107,7 +107,7 @@ public static class FFmpeg
 
 		if (!success)
 		{
-			_logger.Warn($"Could not count frames from {filePath}: {stderr}");
+			_logger.Warn($"Could not count packets from {filePath}: {stderr}");
 			return 0;
 		}
 
@@ -174,33 +174,57 @@ public static class FFmpeg
 
 		var stream = streams[0];
 
+		// Try to get resolution from the container
 		int width = stream.TryGetProperty("width", out var wElem) ? wElem.GetInt32() : 0;
 		int height = stream.TryGetProperty("height", out var hElem) ? hElem.GetInt32() : 0;
+
+		// Try to get framerate and frame count from the container
+		double frameRate = 0;
 		int frameCount = 0;
 
-		if (stream.TryGetProperty("nb_frames", out var nbElem) && int.TryParse(nbElem.GetString(), out int parsedFrames))
-			frameCount = parsedFrames;
-
-		if (frameCount == 0)
-		{
-			_logger.Warn("Using alternative way to count frames from video, this may take a while!");
-			frameCount = await GetExactFrameCountAsync(filePath);
-		}
-
-		double frameRate = 0;
+		if (stream.TryGetProperty("nb_frames", out var nbElem) && int.TryParse(nbElem.GetString(), out int nbFrames))
+        {
+            frameCount = nbFrames;
+            _logger.Debug("Got frame count  from nb_frames");
+        }
 
 		if (stream.TryGetProperty("r_frame_rate", out var rElem))
-		{
-			var parts = rElem.GetString()?.Split('/');
+        {
+            var parts = rElem.GetString()?.Split('/');
 
-			if (parts?.Length == 2 &&
-				double.TryParse(parts[0], out double num) &&
-				double.TryParse(parts[1], out double den) &&
-				den != 0)
-			{
-				frameRate = num / den;
-			}
+            if (parts?.Length == 2 &&
+                double.TryParse(parts[0], out double num) &&
+                double.TryParse(parts[1], out double den) &&
+                den != 0)
+            {
+                frameRate = num / den;
+                _logger.Debug("Got framerate metadata from r_frame_rate");
+            }
+        }
+
+		// Try to get duration metadata from the container
+		double duration = 0;
+
+		if (root.TryGetProperty("format", out var formatElem) &&
+			formatElem.TryGetProperty("duration", out var durElem) &&
+			double.TryParse(durElem.GetString(), out double parsedDuration))
+		{
+			duration = parsedDuration;
 		}
+
+        // If nb_frames is missing, estimate the frame count with the duration * frame rate
+		if (frameCount == 0 && duration > 0 && frameRate > 0)
+        {
+            frameCount = (int)Math.Round(duration * frameRate);
+            _logger.Debug("Got frame count from duration * frameRate");
+        }
+    
+        // If nb_frames, duration and frame rate is missing, use packet count (less accurate)
+        if (frameCount == 0)
+        {
+            frameCount = await GetPacketCountAsync(filePath);
+            _logger.Debug("Got frame count from GetPacketCountAsync");
+        }
 
         return new VideoMetadata
         {
