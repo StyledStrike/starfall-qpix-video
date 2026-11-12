@@ -1,5 +1,5 @@
-using System.Text.Json;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace QPixConverter;
 
@@ -40,7 +40,7 @@ public static class FFmpeg
 {
     private static readonly Logger _logger = new("FFmpeg");
 
-    private static async Task<(bool success, string stdout, string stderr)> RunCommandAsync(string fileName, IEnumerable<string> args)
+    private static async Task<(bool success, string stdout, string stderr)> RunCommandAsync(string fileName, IEnumerable<string> args, CancellationToken ctk = default)
     {
         var psi = new ProcessStartInfo
         {
@@ -55,17 +55,36 @@ public static class FFmpeg
             psi.ArgumentList.Add(arg);
 
         using var process = new Process { StartInfo = psi };
-        process.Start();
+
+        if (!process.Start())
+            return (false, string.Empty, "Failed to start process");
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
 
-        await process.WaitForExitAsync();
+        try
+        {
+            await process.WaitForExitAsync(ctk);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Suppress exceptions if process already exited
+            }
+
+            throw; // Re-throw the cancellation
+        }
 
         return (process.ExitCode == 0, await stdoutTask, await stderrTask);
     }
 
-    private static async Task<(bool success, byte[] stdoutBytes, string stderr)> RunCommandRawAsync(string fileName, IEnumerable<string> args)
+    private static async Task<(bool success, byte[] stdoutBytes, string stderr)> RunCommandRawAsync(string fileName, IEnumerable<string> args, CancellationToken ctk = default)
     {
         var psi = new ProcessStartInfo
         {
@@ -80,18 +99,38 @@ public static class FFmpeg
             psi.ArgumentList.Add(arg);
 
         using var process = new Process { StartInfo = psi };
-        process.Start();
+        
+        if (!process.Start())
+            return (false, [], "Failed to start process");
 
         using var stream = new MemoryStream();
+
         var copyTask = process.StandardOutput.BaseStream.CopyToAsync(stream);
         var stderrTask = process.StandardError.ReadToEndAsync();
 
-        await Task.WhenAll(copyTask, process.WaitForExitAsync());
+        try
+        {
+            await Task.WhenAll(copyTask, process.WaitForExitAsync(ctk));
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Suppress exceptions if process already exited
+            }
+
+            throw; // Re-throw the cancellation
+        }
 
         return (process.ExitCode == 0, stream.ToArray(), await stderrTask);
     }
 
-    private static async Task<int> GetPacketCountAsync(string filePath)
+    private static async Task<int> GetPacketCountAsync(string filePath, CancellationToken ctk = default)
     {
         var args = new[]
         {
@@ -103,7 +142,10 @@ public static class FFmpeg
             filePath
         };
 
-        var (success, stdout, stderr) = await RunCommandAsync("ffprobe", args);
+        var (success, stdout, stderr) = await RunCommandAsync("ffprobe", args, ctk);
+
+        if (ctk.IsCancellationRequested)
+            ctk.ThrowIfCancellationRequested();
 
         if (!success)
         {
@@ -114,7 +156,7 @@ public static class FFmpeg
         return int.TryParse(stdout.Trim(), out int count) ? count : 0;
     }
 
-    public static async Task<byte[]> ConvertToOGGAudioAsync(string sourcePath, AudioOptions? options = null)
+    public static async Task<byte[]> ConvertToOGGAudioAsync(string sourcePath, AudioOptions? options = null, CancellationToken ctk = default)
     {
         options ??= new AudioOptions();
 
@@ -142,7 +184,10 @@ public static class FFmpeg
 
         args.AddRange(["-f", "ogg", "pipe:1"]);
 
-        var (success, stdoutBytes, stderr) = await RunCommandRawAsync("ffmpeg", [.. args]);
+        var (success, stdoutBytes, stderr) = await RunCommandRawAsync("ffmpeg", [.. args], ctk);
+
+        if (ctk.IsCancellationRequested)
+            ctk.ThrowIfCancellationRequested();
 
         if (!success)
             throw new Exception($"ffmpeg exited with error: {stderr}");
@@ -150,7 +195,7 @@ public static class FFmpeg
         return stdoutBytes;
     }
 
-    public static async Task<VideoMetadata> GetVideoMetadataAsync(string filePath)
+    public static async Task<VideoMetadata> GetVideoMetadataAsync(string filePath, CancellationToken ctk = default)
     {
         var args = new[]
         {
@@ -161,7 +206,10 @@ public static class FFmpeg
             filePath
         };
 
-        var (success, stdout, stderr) = await RunCommandAsync("ffprobe", args);
+        var (success, stdout, stderr) = await RunCommandAsync("ffprobe", args, ctk);
+
+        if (ctk.IsCancellationRequested)
+            ctk.ThrowIfCancellationRequested();
 
         if (!success)
             throw new Exception($"ffprobe failed to read file: {stderr}");
@@ -218,11 +266,11 @@ public static class FFmpeg
             frameCount = (int)Math.Round(duration * frameRate);
             _logger.Debug("Got frame count from duration * frameRate");
         }
-    
+
         // If nb_frames, duration and frame rate is missing, use packet count (less accurate)
         if (frameCount == 0)
         {
-            frameCount = await GetPacketCountAsync(filePath);
+            frameCount = await GetPacketCountAsync(filePath, ctk);
             _logger.Debug("Got frame count from GetPacketCountAsync");
         }
 

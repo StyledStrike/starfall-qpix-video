@@ -48,9 +48,7 @@ public class ConvertJob
     public ConvertJobProgress Progress { get; private set; }
 
     private CancellationTokenSource? _cts;
-    private Task<VideoMetadata>? _videoMetadataTask;
     private Task? _videoStreamTask;
-    private Task<byte[]>? _audioDataTask;
 
     public ConvertJob(ConvertJobOptions options)
     {
@@ -84,9 +82,7 @@ public class ConvertJob
         try
         {
             // Get source video file metadata
-            _videoMetadataTask = FFmpeg.GetVideoMetadataAsync(Options.InputFilePath);
-            await _videoMetadataTask.WaitAsync(_cts.Token);
-            var sourceVideoMetadata = _videoMetadataTask.Result;
+            var sourceVideoMetadata = await FFmpeg.GetVideoMetadataAsync(Options.InputFilePath, _cts.Token);
 
             // Limit source video resolution/framerate
             var (newWidth, newHeight) = Utils.FitDimensions(sourceVideoMetadata.Width, sourceVideoMetadata.Height, Options.MaxWidth, Options.MaxHeight);
@@ -110,6 +106,8 @@ public class ConvertJob
 
             videoStream.SetFrameCallback((rgbBuffer, width, height) =>
             {
+                if (_cts == null || _cts.IsCancellationRequested) return;
+
                 for (int pixelIndex = 0, byteOffset = 0; pixelIndex < tempFrameData.Length; pixelIndex++, byteOffset += 3)
                 {
                     tempFrameData[pixelIndex].r = rgbBuffer[byteOffset] / 255f;
@@ -137,9 +135,12 @@ public class ConvertJob
             {
                 try
                 {
-                    _audioDataTask = FFmpeg.ConvertToOGGAudioAsync(Options.InputFilePath);
-                    await _audioDataTask.WaitAsync(_cts.Token);
-                    encoder.SetAudioData(_audioDataTask.Result);
+                    var audioData = await FFmpeg.ConvertToOGGAudioAsync(Options.InputFilePath, null, _cts.Token);
+                    encoder.SetAudioData(audioData);
+                }
+                catch(OperationCanceledException)
+                {
+                    throw;
                 }
                 catch(Exception e)
                 {
@@ -182,18 +183,10 @@ public class ConvertJob
         }
         finally
         {
-            if (_videoMetadataTask != null && (_videoMetadataTask.IsCompleted || _videoMetadataTask.IsCanceled))
-                _videoMetadataTask.Dispose();
-
             if (_videoStreamTask != null && (_videoStreamTask.IsCompleted || _videoStreamTask.IsCanceled))
                 _videoStreamTask.Dispose();
 
-            if (_audioDataTask != null && (_audioDataTask.IsCompleted || _audioDataTask.IsCanceled))
-                _audioDataTask.Dispose();
-
-            _videoMetadataTask = null;
             _videoStreamTask = null;
-            _audioDataTask = null;
 
             _cts?.Dispose();
             _cts = null;
