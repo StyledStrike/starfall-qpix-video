@@ -5,67 +5,67 @@ namespace QPixConverter;
 
 public class CropOptions
 {
-	public int Left { get; set; }
-	public int Right { get; set; }
-	public int Top { get; set; }
-	public int Bottom { get; set; }
+    public int Left { get; set; }
+    public int Right { get; set; }
+    public int Top { get; set; }
+    public int Bottom { get; set; }
 }
 
 public class VideoOptions
 {
-	public double FPS { get; set; }
-	public int Width { get; set; }
-	public int Height { get; set; }
-	public double? TimeTrimStart { get; set; }
-	public double? TimeTrimEnd { get; set; }
-	public CropOptions? Crop { get; set; }
+    public double FPS { get; set; }
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public double? TimeTrimStart { get; set; }
+    public double? TimeTrimEnd { get; set; }
+    public CropOptions? Crop { get; set; }
 }
 
 public class AudioOptions
 {
-	public int? Quality { get; set; }
-	public double? TimeTrimStart { get; set; }
-	public double? TimeTrimEnd { get; set; }
+    public int? Quality { get; set; }
+    public double? TimeTrimStart { get; set; }
+    public double? TimeTrimEnd { get; set; }
 }
 
 public class VideoMetadata
 {
-	public int Width { get; set; }
-	public int Height { get; set; }
-	public int FrameCount { get; set; }
-	public double FrameRate { get; set; }
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public int FrameCount { get; set; }
+    public double FrameRate { get; set; }
 }
 
 public static class FFmpeg
 {
-	private static readonly Logger _logger = new("FFmpeg");
+    private static readonly Logger _logger = new("FFmpeg");
 
-	private static async Task<(bool success, string stdout, string stderr)> RunCommandAsync(string fileName, IEnumerable<string> args)
-	{
-		var psi = new ProcessStartInfo
-		{
-			FileName = fileName,
-			RedirectStandardOutput = true,
-			RedirectStandardError = true,
-			UseShellExecute = false,
-			CreateNoWindow = true
-		};
+    private static async Task<(bool success, string stdout, string stderr)> RunCommandAsync(string fileName, IEnumerable<string> args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
 
-		foreach (var arg in args)
-			psi.ArgumentList.Add(arg);
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
 
-		using var process = new Process { StartInfo = psi };
-		process.Start();
+        using var process = new Process { StartInfo = psi };
+        process.Start();
 
-		var stdoutTask = process.StandardOutput.ReadToEndAsync();
-		var stderrTask = process.StandardError.ReadToEndAsync();
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
 
-		await process.WaitForExitAsync();
+        await process.WaitForExitAsync();
 
-		return (process.ExitCode == 0, await stdoutTask, await stderrTask);
-	}
+        return (process.ExitCode == 0, await stdoutTask, await stderrTask);
+    }
 
-	private static async Task<(bool success, byte[] stdoutBytes, string stderr)> RunCommandRawAsync(string fileName, IEnumerable<string> args)
+    private static async Task<(bool success, byte[] stdoutBytes, string stderr)> RunCommandRawAsync(string fileName, IEnumerable<string> args)
     {
         var psi = new ProcessStartInfo
         {
@@ -91,30 +91,30 @@ public static class FFmpeg
         return (process.ExitCode == 0, stream.ToArray(), await stderrTask);
     }
 
-	private static async Task<int> GetPacketCountAsync(string filePath)
-	{
-		var args = new[]
-		{
-			"-v", "error",
-			"-select_streams", "v:0",
-			"-count_packets",
-			"-show_entries", "stream=nb_read_packets",
-			"-of", "default=nokey=1:noprint_wrappers=1",
-			filePath
-		};
+    private static async Task<int> GetPacketCountAsync(string filePath)
+    {
+        var args = new[]
+        {
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-count_packets",
+            "-show_entries", "stream=nb_read_packets",
+            "-of", "default=nokey=1:noprint_wrappers=1",
+            filePath
+        };
 
-		var (success, stdout, stderr) = await RunCommandAsync("ffprobe", args);
+        var (success, stdout, stderr) = await RunCommandAsync("ffprobe", args);
 
-		if (!success)
-		{
-			_logger.Warn($"Could not count packets from {filePath}: {stderr}");
-			return 0;
-		}
+        if (!success)
+        {
+            _logger.Warn($"Could not count packets from {filePath}: {stderr}");
+            return 0;
+        }
 
-		return int.TryParse(stdout.Trim(), out int count) ? count : 0;
-	}
+        return int.TryParse(stdout.Trim(), out int count) ? count : 0;
+    }
 
-	public static async Task<byte[]> ConvertToOGGAudioAsync(string sourcePath, AudioOptions? options = null)
+    public static async Task<byte[]> ConvertToOGGAudioAsync(string sourcePath, AudioOptions? options = null)
     {
         options ??= new AudioOptions();
 
@@ -132,7 +132,7 @@ public static class FFmpeg
             args.Add(options.TimeTrimEnd.Value.ToString());
         }
 
-		args.AddRange(["-vn", "-acodec", "libvorbis"]);
+        args.AddRange(["-vn", "-acodec", "libvorbis"]);
 
         if (options.Quality != null)
         {
@@ -150,45 +150,45 @@ public static class FFmpeg
         return stdoutBytes;
     }
 
-	public static async Task<VideoMetadata> GetVideoMetadataAsync(string filePath)
-	{
-		var args = new[]
-		{
-			"-v", "error",
-			"-select_streams", "v:0",
-			"-show_entries", "stream=width,height,r_frame_rate,nb_frames:stream_tags=rotate",
-			"-of", "json",
-			filePath
-		};
+    public static async Task<VideoMetadata> GetVideoMetadataAsync(string filePath)
+    {
+        var args = new[]
+        {
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height,r_frame_rate,nb_frames:stream_tags=rotate",
+            "-of", "json",
+            filePath
+        };
 
-		var (success, stdout, stderr) = await RunCommandAsync("ffprobe", args);
+        var (success, stdout, stderr) = await RunCommandAsync("ffprobe", args);
 
-		if (!success)
-			throw new Exception($"ffprobe failed to read file: {stderr}");
+        if (!success)
+            throw new Exception($"ffprobe failed to read file: {stderr}");
 
-		using var doc = JsonDocument.Parse(stdout);
-		var root = doc.RootElement;
+        using var doc = JsonDocument.Parse(stdout);
+        var root = doc.RootElement;
 
-		if (!root.TryGetProperty("streams", out var streams) || streams.GetArrayLength() == 0)
-			throw new Exception("No video stream found in the specified file.");
+        if (!root.TryGetProperty("streams", out var streams) || streams.GetArrayLength() == 0)
+            throw new Exception("No video stream found in the specified file.");
 
-		var stream = streams[0];
+        var stream = streams[0];
 
-		// Try to get resolution from the container
-		int width = stream.TryGetProperty("width", out var wElem) ? wElem.GetInt32() : 0;
-		int height = stream.TryGetProperty("height", out var hElem) ? hElem.GetInt32() : 0;
+        // Try to get resolution from the container
+        int width = stream.TryGetProperty("width", out var wElem) ? wElem.GetInt32() : 0;
+        int height = stream.TryGetProperty("height", out var hElem) ? hElem.GetInt32() : 0;
 
-		// Try to get framerate and frame count from the container
-		double frameRate = 0;
-		int frameCount = 0;
+        // Try to get framerate and frame count from the container
+        double frameRate = 0;
+        int frameCount = 0;
 
-		if (stream.TryGetProperty("nb_frames", out var nbElem) && int.TryParse(nbElem.GetString(), out int nbFrames))
+        if (stream.TryGetProperty("nb_frames", out var nbElem) && int.TryParse(nbElem.GetString(), out int nbFrames))
         {
             frameCount = nbFrames;
             _logger.Debug("Got frame count  from nb_frames");
         }
 
-		if (stream.TryGetProperty("r_frame_rate", out var rElem))
+        if (stream.TryGetProperty("r_frame_rate", out var rElem))
         {
             var parts = rElem.GetString()?.Split('/');
 
@@ -202,18 +202,18 @@ public static class FFmpeg
             }
         }
 
-		// Try to get duration metadata from the container
-		double duration = 0;
+        // Try to get duration metadata from the container
+        double duration = 0;
 
-		if (root.TryGetProperty("format", out var formatElem) &&
-			formatElem.TryGetProperty("duration", out var durElem) &&
-			double.TryParse(durElem.GetString(), out double parsedDuration))
-		{
-			duration = parsedDuration;
-		}
+        if (root.TryGetProperty("format", out var formatElem) &&
+            formatElem.TryGetProperty("duration", out var durElem) &&
+            double.TryParse(durElem.GetString(), out double parsedDuration))
+        {
+            duration = parsedDuration;
+        }
 
         // If nb_frames is missing, estimate the frame count with the duration * frame rate
-		if (frameCount == 0 && duration > 0 && frameRate > 0)
+        if (frameCount == 0 && duration > 0 && frameRate > 0)
         {
             frameCount = (int)Math.Round(duration * frameRate);
             _logger.Debug("Got frame count from duration * frameRate");
@@ -233,5 +233,5 @@ public static class FFmpeg
             FrameCount = frameCount,
             FrameRate = frameRate
         };
-	}
+    }
 }
