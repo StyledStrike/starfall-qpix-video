@@ -16,17 +16,13 @@ In-game, open the Starfall Editor, find and open the `qpix/qpix_player.txt` scri
 
 ## QPixConverter
 
-This repository also includes a C# application to convert videos to QPix using FFMPEG.
+This repository also includes a C# application to convert videos to QPix using FFMPEG. Go to the [Releases page](https://github.com/StyledStrike/starfall-qpix-video/releases/latest) to get Windows/Linux binaries.
 
-It requires having [FFMPEG](https://ffmpeg.org/download.html) installed on your system and added into your `PATH` environment variable.
+It requires having [FFMPEG](https://ffmpeg.org) on your system. You can find [installation instructions here](FFMPEG.md).
 
 ![](.assets/qpixconverter_screenshot.png)
 
-> ⚠️ Warning: Some WebM files (such as the ones downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp)) are very slow to convert, since FFMPEG needs to count the frames one by one.
-
-### Pre-built binaries
-
-Go to the [Releases page](https://github.com/StyledStrike/starfall-qpix-video/releases/latest) to get Windows/Linux binaries.
+> ⚠️ Warning: Some WebM files (such as the ones downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp)) can be slow to convert.
 
 ### Building
 
@@ -38,10 +34,10 @@ Clone this repository, then open a terminal in the cloned directory. You can use
 # Restore dependencies
 dotnet restore
 
-# Build (on Windows)
+# Build (for Windows)
 dotnet publish QPixConverter/QPixConverter.csproj --configuration Release --runtime win-x64 --self-contained true
 
-# Build (on Linux)
+# Build (for Linux)
 dotnet publish QPixConverter/QPixConverter.csproj --configuration Release --runtime linux-x64 --self-contained true
 ```
 
