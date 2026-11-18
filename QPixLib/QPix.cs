@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace QPixLib;
 
-enum QPixFrameMode
+public enum QPixFrameMode
 {
     SKIP = 0,
     DELTA = 1,
