@@ -96,7 +96,7 @@ public class FFmpegRawVideoStream(string filePath, VideoOptions options)
         {
             FileName = "ffmpeg",
             RedirectStandardOutput = true,
-            RedirectStandardError = true,
+            RedirectStandardError = false,
             UseShellExecute = false,
             CreateNoWindow = true
         };
