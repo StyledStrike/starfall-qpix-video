@@ -21,12 +21,11 @@ public class FFmpegRawVideoStream(string filePath, VideoOptions options)
         _onRawFrame = callback;
     }
 
-    private List<string> BuildArguments(string? audioOutBackend = null, string? audioOutDevice = null)
+    private List<string> BuildArguments(string[]? audioArguments = null)
     {
         var args = new List<string>();
-        var isAudioDeviceSet = !string.IsNullOrEmpty(audioOutBackend) && !string.IsNullOrEmpty(audioOutDevice);
 
-        if (isAudioDeviceSet)
+        if (audioArguments != null)
             args.Add("-re"); // Real-time decoding
 
         if (_options.TimeTrimStart.HasValue)
@@ -71,19 +70,16 @@ public class FFmpegRawVideoStream(string filePath, VideoOptions options)
             "pipe:1" // Direct to stdout
         ]);
 
-        if (isAudioDeviceSet)
+        if (audioArguments != null)
         {
-            args.AddRange([
-                "-map", "0:a?", // '?' makes audio optional, if video has no audio track
-                "-f", audioOutBackend ?? "",
-                audioOutDevice ?? ""
-            ]);
+            args.AddRange("-map", "0:a?"); // '?' makes audio optional, if video has no audio track
+            args.AddRange(audioArguments);
         }
 
         return args;
     }
 
-    public async Task StartAsync(string? audioOutBackend = null, string? audioOutDevice = null)
+    public async Task StartAsync(string[]? audioArguments = null)
     {
         if (_isRunning)
         {
@@ -91,7 +87,7 @@ public class FFmpegRawVideoStream(string filePath, VideoOptions options)
             return;
         }
 
-        var ffmpegArgs = BuildArguments(audioOutBackend, audioOutDevice);
+        var ffmpegArgs = BuildArguments(audioArguments);
         _logger.Info("Arguments: " + Logger.Highlight(string.Join(" ", ffmpegArgs)));
 
         _cts = new CancellationTokenSource();
